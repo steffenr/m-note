@@ -3,13 +3,14 @@ import { NodeViewContent, NodeViewWrapper, type ReactNodeViewProps } from "@tipt
 import { ClipboardCopyIcon } from "@/components/tiptap-icons/clipboard-copy-icon"
 import { CheckIcon } from "@/components/tiptap-icons/check-icon"
 import { copyCodeToClipboard } from "@/lib/copy-code"
+import { MermaidPreview } from "./mermaid-preview"
 
 export function CodeBlockNode({
   node,
   updateAttributes,
   extension,
 }: ReactNodeViewProps) {
-  const defaultLanguage = node.attrs.language as string | null
+  const language = node.attrs.language as string | null
   const [copied, setCopied] = useState(false)
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -41,12 +42,14 @@ export function CodeBlockNode({
           )}
         </button>
         <select
-          defaultValue={defaultLanguage ?? "null"}
+          aria-label="Code language"
+          value={language ?? "null"}
           onChange={(event) => updateAttributes({ language: event.target.value })}
         >
           <option value="null">auto</option>
+          <option value="mermaid">Mermaid</option>
           <option disabled>—</option>
-          {(extension.options.lowlight.listLanguages() as string[]).map((lang: string, index: number) => (
+          {(extension.options.lowlight.listLanguages() as string[]).filter(lang => lang !== "mermaid").map((lang: string, index: number) => (
             <option key={index} value={lang}>
               {lang}
             </option>
@@ -57,6 +60,7 @@ export function CodeBlockNode({
         {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
         <NodeViewContent as={"code" as any} />
       </pre>
+      {language === "mermaid" && <MermaidPreview source={node.textContent} />}
     </NodeViewWrapper>
   )
 }
