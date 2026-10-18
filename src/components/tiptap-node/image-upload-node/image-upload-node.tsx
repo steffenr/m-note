@@ -1,5 +1,7 @@
 "use client"
 
+import { runEditorTask } from "@/editor-update-guard"
+
 import { useRef, useState } from "react"
 import type { NodeViewProps } from "@tiptap/react"
 import { NodeViewWrapper } from "@tiptap/react"
@@ -63,7 +65,7 @@ export interface UploadOptions {
   upload: (
     file: File,
     onProgress: (event: { progress: number }) => void,
-    signal: AbortSignal
+    signal: AbortSignal,
   ) => Promise<string>
   /**
    * Callback triggered when a file is uploaded successfully
@@ -88,7 +90,7 @@ function useFileUpload(options: UploadOptions) {
   const uploadFile = async (file: File): Promise<string | null> => {
     if (file.size > options.maxSize) {
       const error = new Error(
-        `File size exceeds maximum allowed (${options.maxSize / 1024 / 1024}MB)`
+        `File size exceeds maximum allowed (${options.maxSize / 1024 / 1024}MB)`,
       )
       options.onError?.(error)
       return null
@@ -117,11 +119,11 @@ function useFileUpload(options: UploadOptions) {
         (event: { progress: number }) => {
           setFileItems((prev) =>
             prev.map((item) =>
-              item.id === fileId ? { ...item, progress: event.progress } : item
-            )
+              item.id === fileId ? { ...item, progress: event.progress } : item,
+            ),
           )
         },
-        abortController.signal
+        abortController.signal,
       )
 
       if (!url) throw new Error("Upload failed: No URL returned")
@@ -131,8 +133,8 @@ function useFileUpload(options: UploadOptions) {
           prev.map((item) =>
             item.id === fileId
               ? { ...item, status: "success", url, progress: 100 }
-              : item
-          )
+              : item,
+          ),
         )
         options.onSuccess?.(url)
         return url
@@ -145,11 +147,11 @@ function useFileUpload(options: UploadOptions) {
           prev.map((item) =>
             item.id === fileId
               ? { ...item, status: "error", progress: 0 }
-              : item
-          )
+              : item,
+          ),
         )
         options.onError?.(
-          error instanceof Error ? error : new Error("Upload failed")
+          error instanceof Error ? error : new Error("Upload failed"),
         )
       }
       return null
@@ -165,8 +167,8 @@ function useFileUpload(options: UploadOptions) {
     if (options.limit && files.length > options.limit) {
       options.onError?.(
         new Error(
-          `Maximum ${options.limit} file${options.limit === 1 ? "" : "s"} allowed`
-        )
+          `Maximum ${options.limit} file${options.limit === 1 ? "" : "s"} allowed`,
+        ),
       )
       return []
     }
@@ -451,35 +453,43 @@ export const ImageUploadNode: React.FC<NodeViewProps> = (props) => {
     useFileUpload(uploadOptions)
 
   const handleUpload = async (files: File[]) => {
-    const urls = await uploadFiles(files)
+    try {
+      await runEditorTask(props.editor, async () => {
+        const urls = await uploadFiles(files)
 
-    if (urls.length > 0) {
-      const pos = props.getPos()
+        if (urls.length > 0) {
+          const pos = props.getPos()
 
-      if (isValidPosition(pos)) {
-        const imageNodes = urls.map((url, index) => {
-          const filename =
-            files[index]?.name.replace(/\.[^/.]+$/, "") || "unknown"
-          return {
-            type: extension.options.type,
-            attrs: {
-              ...extension.options,
-              src: url,
-              alt: filename,
-              title: filename,
-            },
+          if (isValidPosition(pos)) {
+            const imageNodes = urls.map((url, index) => {
+              const filename =
+                files[index]?.name.replace(/\.[^/.]+$/, "") || "unknown"
+              return {
+                type: extension.options.type,
+                attrs: {
+                  ...extension.options,
+                  src: url,
+                  alt: filename,
+                  title: filename,
+                },
+              }
+            })
+
+            props.editor
+              .chain()
+              .focus()
+              .deleteRange({ from: pos, to: pos + props.node.nodeSize })
+              .insertContentAt(pos, imageNodes)
+              .run()
+
+            focusNextNode(props.editor)
           }
-        })
-
-        props.editor
-          .chain()
-          .focus()
-          .deleteRange({ from: pos, to: pos + props.node.nodeSize })
-          .insertContentAt(pos, imageNodes)
-          .run()
-
-        focusNextNode(props.editor)
-      }
+        }
+      })
+    } catch (error) {
+      extension.options.onError?.(
+        error instanceof Error ? error : new Error("Image upload failed"),
+      )
     }
   }
 

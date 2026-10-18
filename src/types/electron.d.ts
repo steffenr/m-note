@@ -3,19 +3,22 @@ declare const __APP_VERSION__: string
 interface ElectronAPI {
   onFileOpened: (callback: (filePath: string) => void) => () => void
   readFile: (filePath: string) => Promise<{ path: string; content: string }>
-  checkForUpdate: () => Promise<{ version: string; downloadUrl: string } | null>
-  onUpdateDownloaded: (
-    callback: (info: { releaseName: string; updateUrl: string }) => void,
-  ) => () => void
-  installUpdate: () => Promise<void>
+  checkForUpdate: () => Promise<import('../update-state').UpdateState>
+  getUpdateState: () => Promise<import('../update-state').UpdateState>
+  onUpdateStateChanged: (callback: (state: import('../update-state').UpdateState) => void) => () => void
+  installUpdate: () => Promise<import('../update-state').InstallResult>
   openExternal: (url: string) => Promise<void>
   openLocalFile: (filePath: string) => Promise<boolean>
   saveFile: (filePath: string, content: string) => Promise<void>
   getFilePath: (file: File) => string
-  onSaveBeforeClose: (callback: () => void) => () => void
-  notifySaveComplete: () => void
+  onSaveBeforeClose: (callback: (request: { requestId: string; savePath?: string }) => void) => () => void
+  notifySaveComplete: (reply: { requestId: string; success: boolean; error?: string }) => void
+  setFilePath: (filePath: string) => Promise<void>
 }
 
 interface Window {
+  __hasUnsavedChanges?: () => boolean
+  __currentFilePath?: () => string | null
+  __setUpdateFrozen?: (frozen: boolean) => void
   electronAPI: ElectronAPI
 }

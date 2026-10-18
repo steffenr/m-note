@@ -71,3 +71,9 @@ The source stays editable with a live diagram below it. Previews update after a 
 Invalid or oversized diagrams show an error without discarding source. If an earlier valid preview remains visible, it is marked as stale. Diagram links and external images are disabled.
 
 Rendering uses [Pele](https://pele.run/), whose layout differs from Mermaid.js. Mermaid theme colours, arbitrary HTML labels, and external Mermaid plugins are not supported; see [Pele's compatibility guide](https://pele.run/compatibility).
+
+## App updates
+
+Installed macOS builds check for updates automatically when the app launches. Click **Check for Updates** in an existing instance to check again. Available updates download inside the app; choose **Restart & Install** when ready. Unsaved notes are handled before the app closes. If a check or download fails, use **Retry** or the toolbar icon. The app does not offer manual download links.
+
+Release with `npm run release -- "Release notes"`. The release pipeline validates the signed update ZIP and versioned architecture feed, uploads a draft, verifies the uploaded artifacts and then publishes. See [native update verification](docs/testing/native-updates.md) for the required installed-app acceptance test.

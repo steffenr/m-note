@@ -105,7 +105,7 @@ describe('handleFileDrop', () => {
     expect(callbacks.setFilePath).not.toHaveBeenCalled()
   })
 
-  it('checks for updates after successfully loading a dropped file', async () => {
+  it('does not check for updates when loading a dropped file', async () => {
     const api = {
       getFilePath: vi.fn().mockReturnValue('/Users/test/doc.md'),
       readFile: vi.fn().mockResolvedValue({ path: '/Users/test/doc.md', content: '# Hello' }),
@@ -115,6 +115,7 @@ describe('handleFileDrop', () => {
 
     handleFileDrop(makeFileList(file), api, callbacks)
 
-    await vi.waitFor(() => expect(api.checkForUpdate).toHaveBeenCalled())
+    await vi.waitFor(() => expect(callbacks.setContent).toHaveBeenCalledWith('# Hello'))
+    expect(api.checkForUpdate).not.toHaveBeenCalled()
   })
 })

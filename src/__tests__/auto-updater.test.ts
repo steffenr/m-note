@@ -1,144 +1,111 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-const mockCheckForUpdates = vi.fn()
-const mockGetFeedURL = vi.fn(() => '')
-const mockOn = vi.fn()
-const mockQuitAndInstall = vi.fn()
-const mockSetFeedURL = vi.fn()
-const mockWebContentsSend = vi.fn()
-
+import { beforeEach, expect, it, vi } from 'vitest'
+const mocks = vi.hoisted(() => ({
+  check: vi.fn(),
+  feed: vi.fn(),
+  install: vi.fn(),
+  lookup: vi.fn(),
+  listeners: {} as Record<string, (...args: unknown[]) => void>,
+}))
 vi.mock('electron', () => ({
   autoUpdater: {
-    checkForUpdates: () => mockCheckForUpdates(),
-    getFeedURL: () => mockGetFeedURL(),
-    on: (...args: unknown[]) => mockOn(...args),
-    quitAndInstall: () => mockQuitAndInstall(),
-    setFeedURL: (...args: unknown[]) => mockSetFeedURL(...args),
+    on: (name: string, fn: (...args: unknown[]) => void) => {
+      mocks.listeners[name] = fn
+    },
+    setFeedURL: mocks.feed,
+    checkForUpdates: mocks.check,
+    quitAndInstall: mocks.install,
   },
 }))
-
-describe('auto updater', () => {
-  let originalPlatform: PropertyDescriptor | undefined
-
-  beforeEach(() => {
-    vi.resetModules()
-    vi.clearAllMocks()
-    mockGetFeedURL.mockReturnValue('')
-    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+vi.mock('../update-checker', () => ({ checkForUpdate: mocks.lookup }))
+beforeEach(() => {
+  vi.resetModules()
+  vi.clearAllMocks()
+  mocks.lookup.mockResolvedValue({
+    version: '2.0.0',
+    feedUrl: 'https://example.com/update.json',
   })
-
-  afterEach(() => {
-    if (originalPlatform) {
-      Object.defineProperty(process, 'platform', originalPlatform)
-    }
+})
+async function setup() {
+  const updater = await import('../auto-updater')
+  updater.configureAutoUpdater({ isPackaged: true, notifyRenderer: vi.fn() })
+  return updater
+}
+it('downloads once for overlapping checks and preserves ready state', async () => {
+  const u = await setup()
+  await Promise.all([u.checkForNativeUpdate(), u.checkForNativeUpdate()])
+  expect(mocks.check).toHaveBeenCalledTimes(1)
+  expect(u.getUpdateState().status).toBe('downloading')
+  mocks.listeners['update-downloaded']()
+  expect((await u.checkForNativeUpdate()).status).toBe('ready')
+  expect(mocks.check).toHaveBeenCalledTimes(1)
+})
+it('allows retry after native failure', async () => {
+  const u = await setup()
+  await u.checkForNativeUpdate()
+  mocks.listeners.error(new Error('offline'))
+  expect(u.getUpdateState().status).toBe('error')
+  await u.checkForNativeUpdate()
+  expect(mocks.check).toHaveBeenCalledTimes(2)
+})
+it('distinguishes lookup failures from up to date', async () => {
+  const u = await setup()
+  mocks.lookup.mockRejectedValueOnce(new Error('offline'))
+  expect((await u.checkForNativeUpdate()).status).toBe('error')
+  mocks.lookup.mockResolvedValueOnce(null)
+  expect((await u.checkForNativeUpdate()).status).toBe('up-to-date')
+})
+it('retries synchronous native failures', async () => {
+  const u = await setup()
+  mocks.check.mockImplementationOnce(() => {
+    throw new Error('failed')
   })
-
-  it('configures Squirrel.Mac feed URL for packaged macOS builds', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    const { configureAutoUpdater } = await import('../auto-updater')
-
-    const result = configureAutoUpdater({
-      isPackaged: true,
-      notifyRenderer: mockWebContentsSend,
-    })
-
-    expect(result).toBe(true)
-    expect(mockSetFeedURL).toHaveBeenCalledWith({
-      url: 'https://github.com/younghoandrewchaa/m-note/releases/latest/download/update.json',
-      serverType: 'json',
-    })
-    expect(mockOn).toHaveBeenCalledWith('update-downloaded', expect.any(Function))
+  expect((await u.checkForNativeUpdate()).status).toBe('error')
+  expect((await u.checkForNativeUpdate()).status).toBe('downloading')
+})
+it('does not install without a downloaded update', async () => {
+  const u = await setup()
+  expect((await u.installNativeUpdate()).status).toBe('error')
+  expect(mocks.install).not.toHaveBeenCalled()
+})
+it('returns ready after a cancelled preparation and permits another attempt', async () => {
+  const u = await setup()
+  const prepare = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true)
+  u.configureAutoUpdater({
+    isPackaged: true,
+    notifyRenderer: vi.fn(),
+    prepareInstall: prepare,
   })
-
-  it('does not configure native updates outside packaged macOS builds', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    const { configureAutoUpdater } = await import('../auto-updater')
-
-    const result = configureAutoUpdater({
-      isPackaged: false,
-      notifyRenderer: mockWebContentsSend,
-    })
-
-    expect(result).toBe(false)
-    expect(mockSetFeedURL).not.toHaveBeenCalled()
+  await u.checkForNativeUpdate()
+  mocks.listeners['update-downloaded']()
+  expect((await u.installNativeUpdate()).status).toBe('cancelled')
+  expect(u.getUpdateState().status).toBe('ready')
+  expect((await u.installNativeUpdate()).status).toBe('installing')
+  expect(mocks.install).toHaveBeenCalledTimes(1)
+})
+it('prevents double installation while preparing windows', async () => {
+  const u = await setup()
+  let resolve!: (value: boolean) => void
+  u.configureAutoUpdater({
+    isPackaged: true,
+    notifyRenderer: vi.fn(),
+    prepareInstall: () =>
+      new Promise((r) => {
+        resolve = r
+      }),
   })
-
-  it('checks native updates only after the feed URL has been configured', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    mockGetFeedURL.mockReturnValue('https://example.com/RELEASES.json')
-    const { checkForNativeUpdate } = await import('../auto-updater')
-
-    const result = checkForNativeUpdate()
-
-    expect(result).toBe(true)
-    expect(mockCheckForUpdates).toHaveBeenCalledOnce()
-  })
-
-  it('does not start duplicate native update checks', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    mockGetFeedURL.mockReturnValue('https://example.com/RELEASES.json')
-    const { checkForNativeUpdate } = await import('../auto-updater')
-
-    expect(checkForNativeUpdate()).toBe(true)
-    expect(checkForNativeUpdate()).toBe(true)
-
-    expect(mockCheckForUpdates).toHaveBeenCalledOnce()
-  })
-
-  it('sends an update-downloaded event to the renderer', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    const { configureAutoUpdater } = await import('../auto-updater')
-
-    configureAutoUpdater({
-      isPackaged: true,
-      notifyRenderer: mockWebContentsSend,
-    })
-    const downloadedListener = mockOn.mock.calls.find(([event]) => event === 'update-downloaded')?.[1] as (
-      event: unknown,
-      releaseNotes: string,
-      releaseName: string,
-      releaseDate: Date,
-      updateUrl: string,
-    ) => void
-
-    downloadedListener({}, '', 'M Note 1.2.0', new Date('2026-06-02'), 'https://example.com/MNote.zip')
-
-    expect(mockWebContentsSend).toHaveBeenCalledWith('auto-update-downloaded', {
-      releaseName: 'M Note 1.2.0',
-      updateUrl: 'https://example.com/MNote.zip',
-    })
-  })
-
-  it('quits and installs a downloaded update', async () => {
-    const { installNativeUpdate } = await import('../auto-updater')
-
-    installNativeUpdate()
-
-    expect(mockQuitAndInstall).toHaveBeenCalledOnce()
-  })
-
-  it('hasNativeUpdateFailed returns false before any error occurs', async () => {
-    const { hasNativeUpdateFailed } = await import('../auto-updater')
-
-    expect(hasNativeUpdateFailed()).toBe(false)
-  })
-
-  it('sets failure flag when auto-updater errors', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    const { configureAutoUpdater, hasNativeUpdateFailed } = await import('../auto-updater')
-
-    configureAutoUpdater({
-      isPackaged: true,
-      notifyRenderer: mockWebContentsSend,
-    })
-    const errorListener = mockOn.mock.calls.find(([event]) => event === 'error')?.[1] as (
-      error: Error,
-    ) => void
-
-    expect(hasNativeUpdateFailed()).toBe(false)
-
-    errorListener(new Error('Update failed'))
-
-    expect(hasNativeUpdateFailed()).toBe(true)
-  })
+  await u.checkForNativeUpdate()
+  mocks.listeners['update-downloaded']()
+  const first = u.installNativeUpdate()
+  expect((await u.installNativeUpdate()).status).toBe('error')
+  resolve(true)
+  await first
+  expect(mocks.install).toHaveBeenCalledTimes(1)
+})
+it('makes another check possible after update-not-available', async () => {
+  const u = await setup()
+  await u.checkForNativeUpdate()
+  mocks.listeners['update-not-available']()
+  expect(u.getUpdateState().status).toBe('up-to-date')
+  await u.checkForNativeUpdate()
+  expect(mocks.check).toHaveBeenCalledTimes(2)
 })

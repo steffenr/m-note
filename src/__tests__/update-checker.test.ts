@@ -1,98 +1,86 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-
-const mockFetch = vi.fn()
-const mockGetVersion = vi.fn(() => '1.0.0')
-
+import { beforeEach, expect, it, vi } from 'vitest'
+const fetch = vi.hoisted(() => vi.fn())
 vi.mock('electron', () => ({
-  app: { getVersion: () => mockGetVersion() },
-  net: { fetch: (...args: unknown[]) => mockFetch(...args) },
+  app: { getVersion: () => '1.0.0' },
+  net: { fetch },
 }))
-
-function makeRelease(version: string, assets: Array<{ name: string; browser_download_url: string }>) {
-  return {
+import { checkForUpdate } from '../update-checker'
+const prefix =
+  'https://github.com/younghoandrewchaa/m-note/releases/download/v2.0.0/'
+const names = [
+  `M.Note-darwin-${process.arch}-2.0.0.zip`,
+  `update-darwin-${process.arch}.json`,
+]
+beforeEach(() => {
+  fetch.mockReset()
+})
+function release(assets = names, version = '2.0.0') {
+  fetch.mockResolvedValueOnce({
     ok: true,
-    json: () => Promise.resolve({ tag_name: `v${version}`, assets }),
-  }
+    json: async () => ({
+      tag_name: `v${version}`,
+      assets: assets.map((name) => ({
+        name,
+        browser_download_url: prefix + name,
+      })),
+    }),
+  })
+  fetch.mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      url: prefix + names[0],
+      name: `M Note v${version}`,
+      notes: '',
+      pub_date: '2026-10-18T00:00:00Z',
+    }),
+  })
 }
-
-const DMG_ASSET = { name: 'M Note.dmg', browser_download_url: 'https://example.com/MNote.dmg' }
-const EXE_ASSET = { name: 'M Note-1.1.0 Setup.exe', browser_download_url: 'https://example.com/Setup.exe' }
-
-describe('checkForUpdate — platform-aware asset selection', () => {
-  let originalPlatform: PropertyDescriptor | undefined
-
-  beforeEach(() => {
-    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+it('selects a pinned native feed without a DMG', async () => {
+  release()
+  expect(await checkForUpdate()).toEqual({
+    version: '2.0.0',
+    feedUrl: prefix + names[1],
   })
-
-  afterEach(() => {
-    mockFetch.mockReset()
-    mockGetVersion.mockReturnValue('1.0.0')
-    if (originalPlatform) {
-      Object.defineProperty(process, 'platform', originalPlatform)
-    }
+})
+it('rejects incomplete releases', async () => {
+  release([names[1]])
+  await expect(checkForUpdate()).rejects.toThrow('compatible')
+})
+it('rejects wrong architecture', async () => {
+  release(['M.Note-darwin-other-2.0.0.zip', 'update-darwin-other.json'])
+  await expect(checkForUpdate()).rejects.toThrow('compatible')
+})
+it('returns null only when current', async () => {
+  release([], '1.0.0')
+  expect(await checkForUpdate()).toBeNull()
+})
+it('reports network errors', async () => {
+  fetch.mockRejectedValue(new Error('offline'))
+  await expect(checkForUpdate()).rejects.toThrow('offline')
+})
+it('reports HTTP failure', async () => {
+  fetch.mockResolvedValue({ ok: false, status: 503 })
+  await expect(checkForUpdate()).rejects.toThrow('503')
+})
+it('rejects a feed pointing at a different binary', async () => {
+  fetch.mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({
+      tag_name: 'v2.0.0',
+      assets: names.map((name) => ({
+        name,
+        browser_download_url: prefix + name,
+      })),
+    }),
   })
-
-  it('returns dmg download url on darwin when a newer version exists', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    mockFetch.mockResolvedValue(makeRelease('1.1.0', [DMG_ASSET, EXE_ASSET]))
-
-    const { checkForUpdate } = await import('../update-checker')
-    const result = await checkForUpdate()
-
-    expect(result?.downloadUrl).toBe(DMG_ASSET.browser_download_url)
-    expect(result?.version).toBe('1.1.0')
+  fetch.mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      url: 'https://example.com/wrong.zip',
+      name: 'M Note v2.0.0',
+      notes: '',
+      pub_date: '2026-10-18T00:00:00Z',
+    }),
   })
-
-  it('returns setup exe download url on win32 when a newer version exists', async () => {
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-    mockFetch.mockResolvedValue(makeRelease('1.1.0', [DMG_ASSET, EXE_ASSET]))
-
-    const { checkForUpdate } = await import('../update-checker')
-    const result = await checkForUpdate()
-
-    expect(result?.downloadUrl).toBe(EXE_ASSET.browser_download_url)
-    expect(result?.version).toBe('1.1.0')
-  })
-
-  it('returns null on darwin when release has no dmg asset', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    mockFetch.mockResolvedValue(makeRelease('1.1.0', [EXE_ASSET]))
-
-    const { checkForUpdate } = await import('../update-checker')
-    const result = await checkForUpdate()
-
-    expect(result).toBeNull()
-  })
-
-  it('returns null on win32 when release has no setup exe asset', async () => {
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-    mockFetch.mockResolvedValue(makeRelease('1.1.0', [DMG_ASSET]))
-
-    const { checkForUpdate } = await import('../update-checker')
-    const result = await checkForUpdate()
-
-    expect(result).toBeNull()
-  })
-
-  it('returns null when current version is up to date', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    mockGetVersion.mockReturnValue('1.1.0')
-    mockFetch.mockResolvedValue(makeRelease('1.1.0', [DMG_ASSET]))
-
-    const { checkForUpdate } = await import('../update-checker')
-    const result = await checkForUpdate()
-
-    expect(result).toBeNull()
-  })
-
-  it('returns null on unsupported platforms (linux)', async () => {
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
-    mockFetch.mockResolvedValue(makeRelease('1.1.0', [DMG_ASSET, EXE_ASSET]))
-
-    const { checkForUpdate } = await import('../update-checker')
-    const result = await checkForUpdate()
-
-    expect(result).toBeNull()
-  })
+  await expect(checkForUpdate()).rejects.toThrow('metadata')
 })
