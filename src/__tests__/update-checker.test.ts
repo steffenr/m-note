@@ -1,4 +1,5 @@
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 const fetch = vi.hoisted(() => vi.fn())
 vi.mock('electron', () => ({
   app: { getVersion: () => '1.0.0' },
@@ -12,7 +13,11 @@ const names = [
   `update-darwin-${process.arch}.json`,
 ]
 beforeEach(() => {
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
   fetch.mockReset()
+})
+afterEach(() => {
+  Object.defineProperty(process, 'platform', originalPlatform)
 })
 function release(assets = names, version = '2.0.0') {
   fetch.mockResolvedValueOnce({
@@ -35,6 +40,12 @@ function release(assets = names, version = '2.0.0') {
     }),
   })
 }
+it('rejects macOS update assets on Linux', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+  release()
+  await expect(checkForUpdate()).rejects.toThrow('compatible')
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
 it('selects a pinned native feed without a DMG', async () => {
   release()
   expect(await checkForUpdate()).toEqual({

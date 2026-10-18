@@ -1,4 +1,5 @@
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 const mocks = vi.hoisted(() => ({
   check: vi.fn(),
   feed: vi.fn(),
@@ -18,18 +19,31 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../update-checker', () => ({ checkForUpdate: mocks.lookup }))
 beforeEach(() => {
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
   vi.resetModules()
   vi.clearAllMocks()
+  mocks.listeners = {}
   mocks.lookup.mockResolvedValue({
     version: '2.0.0',
     feedUrl: 'https://example.com/update.json',
   })
+})
+afterEach(() => {
+  Object.defineProperty(process, 'platform', originalPlatform)
 })
 async function setup() {
   const updater = await import('../auto-updater')
   updater.configureAutoUpdater({ isPackaged: true, notifyRenderer: vi.fn() })
   return updater
 }
+it('does not configure native updates on Linux', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+  const u = await setup()
+  expect((await u.checkForNativeUpdate()).status).toBe('unsupported')
+  expect(mocks.listeners).toEqual({})
+  expect(mocks.lookup).not.toHaveBeenCalled()
+  expect(mocks.check).not.toHaveBeenCalled()
+})
 it('downloads once for overlapping checks and preserves ready state', async () => {
   const u = await setup()
   await Promise.all([u.checkForNativeUpdate(), u.checkForNativeUpdate()])
