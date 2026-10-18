@@ -2,14 +2,15 @@ import { app, BrowserWindow, ipcMain, screen, session, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import started from 'electron-squirrel-startup'
-import { checkForNativeUpdate, configureAutoUpdater, hasNativeUpdateFailed, installNativeUpdate } from './auto-updater'
-import { checkForUpdate } from './update-checker'
+import { checkForNativeUpdate, configureAutoUpdater, getUpdateState, isInstallingUpdate, installNativeUpdate } from './auto-updater'
+import { prepareWindowsForUpdate, restoreUpdateWindows } from './update-installation'
 import { attachCloseHandler } from './window-close-handler'
 import {
   createDebouncedWindowBoundsWriter,
   getDefaultWindowBounds,
   readWindowBounds,
   type WindowBoundsWriter,
+  type WindowBounds,
 } from './window-state'
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -41,16 +42,8 @@ ipcMain.handle('save-file', async (_, filePath: string, content: string) => {
   await fs.promises.writeFile(filePath, content, 'utf-8')
 })
 
-ipcMain.handle('check-for-update', async () => {
-  // GitHub's release API is the reliable source of truth for whether a newer
-  // version exists (see update-checker.ts). Squirrel.Mac's feed URL is a
-  // static GitHub Releases asset that always answers 200, so it can never say
-  // "no update" on its own — it's only used here to download and install a
-  // version GitHub has already confirmed is newer.
-  const info = await checkForUpdate()
-  if (info && !hasNativeUpdateFailed()) checkForNativeUpdate()
-  return info
-})
+ipcMain.handle('check-for-update', () => checkForNativeUpdate())
+ipcMain.handle('get-update-state', () => getUpdateState())
 
 ipcMain.handle('install-update', () => installNativeUpdate())
 
@@ -126,12 +119,16 @@ app.on('ready', () => {
   saveWindowBounds = createDebouncedWindowBoundsWriter(app.getPath('userData'))
   configureAutoUpdater({
     isPackaged: app.isPackaged,
+    prepareInstall: () => prepareWindowsForUpdate(BrowserWindow.getAllWindows()),
+    restoreWindows: () => { void restoreUpdateWindows() },
     notifyRenderer: (channel, info) => {
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send(channel, info)
       }
     },
   })
+
+  void checkForNativeUpdate()
 
   // Pick up file paths passed as CLI arguments (dev workflow only).
   // The open-file event is not emitted for argv — only for Apple Events from
@@ -171,7 +168,7 @@ app.on('ready', () => {
 
 app.on('window-all-closed', () => {
   saveWindowBounds?.flush()
-  app.quit()
+  if (!isInstallingUpdate()) app.quit()
 })
 
 // Flushes any bounds still pending in the debounce timer so a move/resize

@@ -46,7 +46,7 @@ export function normalizeManifest(manifest, normalizedZipName) {
     const url = new URL(release.updateTo.url);
     const segments = url.pathname.split('/');
     segments[segments.length - 1] = normalizedZipName;
-    url.pathname = segments.join('/');
+    url.pathname = segments.join('/').replace('/releases/latest/download/', `/releases/download/v${manifest.currentRelease}/`);
 
     return {
       ...release,
@@ -91,7 +91,11 @@ function main(argv) {
   fs.writeFileSync(manifestPath, JSON.stringify(normalized));
 
   const feedPath = path.join(path.dirname(manifestPath), 'update.json');
-  fs.writeFileSync(feedPath, JSON.stringify(toSquirrelMacFeed(normalized)));
+  const feed = toSquirrelMacFeed(normalized);
+  fs.writeFileSync(feedPath, JSON.stringify(feed));
+  const match = normalizedName.match(/-darwin-(arm64|x64)-([0-9.]+)\.zip$/);
+  if (!match || match[2] !== manifest.currentRelease) throw new Error('ZIP version or architecture does not match the manifest');
+  fs.writeFileSync(path.join(path.dirname(manifestPath), `update-darwin-${match[1]}.json`), JSON.stringify(feed));
 
   const normalizedZipPath = path.join(path.dirname(zipPath), normalizedName);
   if (normalizedZipPath !== zipPath) {

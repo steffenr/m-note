@@ -12,20 +12,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFile: (filePath: string): Promise<{ path: string; content: string }> => {
     return ipcRenderer.invoke('read-file', filePath)
   },
-  checkForUpdate: (): Promise<{ version: string; downloadUrl: string } | null> => {
-    return ipcRenderer.invoke('check-for-update')
+  checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
+  getUpdateState: () => ipcRenderer.invoke('get-update-state'),
+  onUpdateStateChanged: (callback: (state: import('./update-state').UpdateState) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: import('./update-state').UpdateState) => callback(state)
+    ipcRenderer.on('update-state-changed', listener)
+    return () => ipcRenderer.removeListener('update-state-changed', listener)
   },
-  onUpdateDownloaded: (callback: (info: { releaseName: string; updateUrl: string }) => void) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      info: { releaseName: string; updateUrl: string },
-    ) => callback(info)
-    ipcRenderer.on('auto-update-downloaded', listener)
-    return () => ipcRenderer.removeListener('auto-update-downloaded', listener)
-  },
-  installUpdate: (): Promise<void> => {
-    return ipcRenderer.invoke('install-update')
-  },
+  installUpdate: () => ipcRenderer.invoke('install-update'),
   openExternal: (url: string): Promise<void> => {
     return ipcRenderer.invoke('open-external', url)
   },
@@ -35,13 +29,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFile: (filePath: string, content: string): Promise<void> => {
     return ipcRenderer.invoke('save-file', filePath, content)
   },
-  onSaveBeforeClose: (callback: () => void) => {
-    const listener = () => callback()
+  onSaveBeforeClose: (callback: (request: { requestId: string; savePath?: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: { requestId: string; savePath?: string }) => callback(request)
     ipcRenderer.on('save-before-close', listener)
     return () => ipcRenderer.removeListener('save-before-close', listener)
   },
-  notifySaveComplete: () => {
-    ipcRenderer.send('save-complete')
+  notifySaveComplete: (reply: { requestId: string; success: boolean; error?: string }) => {
+    ipcRenderer.send('save-complete', reply)
   },
   getFilePath: (file: File) => {
     return webUtils.getPathForFile(file)

@@ -47,6 +47,7 @@ vi.mock('electron', () => ({
 
 vi.mock('electron-squirrel-startup', () => ({ default: false }))
 vi.mock('../auto-updater', () => ({
+  isInstallingUpdate: () => false,
   checkForNativeUpdate: vi.fn(() => false),
   configureAutoUpdater: vi.fn(),
   hasNativeUpdateFailed: vi.fn(() => false),
@@ -231,4 +232,14 @@ describe('remember window position', () => {
       height: 740,
     }))
   })
+})
+
+it('starts one update check at launch and not when another document opens', async () => {
+  vi.clearAllMocks()
+  await importFreshMain()
+  const { checkForNativeUpdate } = await import('../auto-updater')
+  appHandlers.ready()
+  expect(checkForNativeUpdate).toHaveBeenCalledTimes(1)
+  appHandlers['open-file']({ preventDefault: vi.fn() }, '/tmp/another.md')
+  expect(checkForNativeUpdate).toHaveBeenCalledTimes(1)
 })

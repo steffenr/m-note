@@ -1,5 +1,13 @@
 "use client"
 
+import {
+  isEditorUpdateFrozen,
+  runEditorTask,
+  setEditorUpdateFrozen,
+} from "@/editor-update-guard"
+import { useAppUpdate } from "@/hooks/use-app-update"
+import { UpdateBanner } from "@/components/update-banner"
+
 import { useCallback, useEffect, useRef, useState } from "react"
 import { EditorContent, EditorContext, useEditor } from "@tiptap/react"
 import { useHotkeys } from "react-hotkeys-hook"
@@ -14,7 +22,12 @@ import { Highlight } from "@tiptap/extension-highlight"
 import { Subscript } from "@tiptap/extension-subscript"
 import { Superscript } from "@tiptap/extension-superscript"
 import { Selection } from "@tiptap/extensions"
-import { Table, TableRow, TableCell, TableHeader } from "@tiptap/extension-table"
+import {
+  Table,
+  TableRow,
+  TableCell,
+  TableHeader,
+} from "@tiptap/extension-table"
 import { Markdown } from "@tiptap/markdown"
 
 // --- Tiptap Extension ---
@@ -92,7 +105,6 @@ import { handleFileDrop } from "@/handle-file-drop"
 // --- Styles ---
 import "@/components/tiptap-templates/simple/simple-editor.scss"
 
-
 const MainToolbarContent = ({
   onHighlighterClick,
   onLinkClick,
@@ -101,6 +113,7 @@ const MainToolbarContent = ({
   canSave,
   currentFilePath,
   onCheckForUpdate,
+  updateStatus,
 }: {
   onHighlighterClick: () => void
   onLinkClick: () => void
@@ -108,6 +121,7 @@ const MainToolbarContent = ({
   onSave: () => Promise<void>
   canSave: boolean
   currentFilePath: string | null
+  updateStatus: import("@/update-state").UpdateState["status"]
   onCheckForUpdate: () => Promise<void>
 }) => {
   return (
@@ -144,7 +158,11 @@ const MainToolbarContent = ({
         ) : (
           <ColorHighlightPopoverButton onClick={onHighlighterClick} />
         )}
-        {!isMobile ? <LinkPopover currentFilePath={currentFilePath} /> : <LinkButton onClick={onLinkClick} />}
+        {!isMobile ? (
+          <LinkPopover currentFilePath={currentFilePath} />
+        ) : (
+          <LinkButton onClick={onLinkClick} />
+        )}
       </ToolbarGroup>
 
       <ToolbarSeparator />
@@ -175,7 +193,10 @@ const MainToolbarContent = ({
         <SaveButton onSave={onSave} canSave={canSave} />
         <CopyMarkdownButton />
         <CopyFilePathButton filePath={currentFilePath} />
-        <CheckUpdateButton onCheckForUpdate={onCheckForUpdate} />
+        <CheckUpdateButton
+          onCheckForUpdate={onCheckForUpdate}
+          updateStatus={updateStatus}
+        />
       </ToolbarGroup>
 
       <Spacer />
@@ -224,15 +245,10 @@ export function SimpleEditor() {
   const isMobile = useIsBreakpoint()
   const { height } = useWindowSize()
   const [mobileView, setMobileView] = useState<"main" | "highlighter" | "link">(
-    "main"
+    "main",
   )
   const toolbarRef = useRef<HTMLDivElement>(null)
-  const [updateInfo, setUpdateInfo] = useState<
-    | { type: 'manual'; version: string; downloadUrl: string }
-    | { type: 'native'; releaseName: string; updateUrl: string }
-    | { type: 'none' }
-    | null
-  >(null)
+  const appUpdate = useAppUpdate()
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
   const currentFilePathRef = useRef<string | null>(null)
@@ -294,32 +310,31 @@ export function SimpleEditor() {
 
   const handleSave = useCallback(async () => {
     if (!editor || !currentFilePathRef.current || !window.electronAPI) return
-    const markdown = (editor as any).getMarkdown() as string
-    await window.electronAPI.saveFile(currentFilePathRef.current, markdown)
-    setIsDirty(false)
-    isDirtyRef.current = false
-    const fileName = currentFilePathRef.current.split('/').pop() ?? currentFilePathRef.current
-    document.title = fileName
+    if (isEditorUpdateFrozen(editor)) return
+    await runEditorTask(editor, async () => {
+      const markdown = (editor as any).getMarkdown() as string
+      await window.electronAPI.saveFile(currentFilePathRef.current, markdown)
+      if ((editor as any).getMarkdown() !== markdown) return
+      setIsDirty(false)
+      isDirtyRef.current = false
+      const fileName =
+        currentFilePathRef.current.split("/").pop() ??
+        currentFilePathRef.current
+      document.title = fileName
+    })
   }, [editor])
 
-  useHotkeys('mod+s', (e) => {
-    e.preventDefault()
-    handleSave()
-  }, { enableOnFormTags: true, enableOnContentEditable: true }, [handleSave])
+  useHotkeys(
+    "mod+s",
+    (e) => {
+      e.preventDefault()
+      handleSave()
+    },
+    { enableOnFormTags: true, enableOnContentEditable: true },
+    [handleSave],
+  )
 
-  const handleCheckForUpdate = useCallback(async () => {
-    if (!window.electronAPI) return
-    const info = await window.electronAPI.checkForUpdate()
-    setUpdateInfo(info ? { type: 'manual', ...info } : { type: 'none' })
-  }, [])
-
-  useEffect(() => {
-    if (updateInfo?.type !== 'none') return
-    const timeout = setTimeout(() => {
-      setUpdateInfo((current) => (current?.type === 'none' ? null : current))
-    }, 3000)
-    return () => clearTimeout(timeout)
-  }, [updateInfo])
+  const handleCheckForUpdate = appUpdate.check
 
   useEffect(() => {
     if (!editor) return
@@ -328,29 +343,64 @@ export function SimpleEditor() {
         setIsDirty(true)
         isDirtyRef.current = true
         if (currentFilePathRef.current) {
-          const fileName = currentFilePathRef.current.split('/').pop() ?? currentFilePathRef.current
+          const fileName =
+            currentFilePathRef.current.split("/").pop() ??
+            currentFilePathRef.current
           document.title = `● ${fileName}`
         }
       }
     }
-    editor.on('update', onUpdate)
-    return () => { editor.off('update', onUpdate) }
+    editor.on("update", onUpdate)
+    return () => {
+      editor.off("update", onUpdate)
+    }
   }, [editor])
 
   useEffect(() => {
-    (window as any).__hasUnsavedChanges = () => isDirtyRef.current
-    return () => { delete (window as any).__hasUnsavedChanges }
-  }, [])
+    window.__hasUnsavedChanges = () => isDirtyRef.current
+    window.__currentFilePath = () => currentFilePathRef.current
+    window.__setUpdateFrozen = (frozen: boolean) => {
+      if (!editor) throw new Error("The editor is still loading. Please retry.")
+      setEditorUpdateFrozen(editor, frozen)
+      document.body.inert = frozen
+    }
+    return () => {
+      delete window.__hasUnsavedChanges
+      delete window.__currentFilePath
+      delete window.__setUpdateFrozen
+      document.body.inert = false
+    }
+  }, [editor])
 
   useEffect(() => {
     if (!window.electronAPI) return
-    const unsubscribe = window.electronAPI.onSaveBeforeClose(async () => {
-      if (editor && currentFilePathRef.current) {
-        const markdown = (editor as any).getMarkdown() as string
-        await window.electronAPI.saveFile(currentFilePathRef.current, markdown)
-      }
-      window.electronAPI.notifySaveComplete()
-    })
+    const unsubscribe = window.electronAPI.onSaveBeforeClose(
+      async ({ requestId, savePath }) => {
+        try {
+          const destination = savePath ?? currentFilePathRef.current
+          if (!editor || !destination)
+            throw new Error("Choose a file before saving.")
+          await window.electronAPI.saveFile(
+            destination,
+            (editor as any).getMarkdown() as string,
+          )
+          currentFilePathRef.current = destination
+          setCurrentFilePath(destination)
+          await window.electronAPI.setFilePath(destination)
+          isDirtyRef.current = false
+          setIsDirty(false)
+          document.title = destination.split("/").pop() ?? destination
+          window.electronAPI.notifySaveComplete({ requestId, success: true })
+        } catch (error) {
+          window.electronAPI.notifySaveComplete({
+            requestId,
+            success: false,
+            error:
+              error instanceof Error ? error.message : "Unable to save note.",
+          })
+        }
+      },
+    )
     return unsubscribe
   }, [editor])
 
@@ -361,38 +411,27 @@ export function SimpleEditor() {
   }, [isMobile, mobileView])
 
   useEffect(() => {
-    if (!window.electronAPI) return
-    window.electronAPI.checkForUpdate().then((info) => {
-      if (info) setUpdateInfo({ type: 'manual', ...info })
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!window.electronAPI) return
-    return window.electronAPI.onUpdateDownloaded((info) => {
-      setUpdateInfo({ type: 'native', ...info })
-    })
-  }, [])
-
-  useEffect(() => {
     if (!editor || !window.electronAPI) return
     const unsubscribe = window.electronAPI.onFileOpened(async (filePath) => {
-      const { content: markdownContent } = await window.electronAPI.readFile(filePath)
-      const { frontmatter, body } = extractFrontmatter(markdownContent)
-      editor.commands.setContent(body, { emitUpdate: false, contentType: 'markdown' })
-      if (frontmatter !== null) {
-        editor.commands.insertContentAt(0, {
-          type: 'frontmatter',
-          content: frontmatter ? [{ type: 'text', text: frontmatter }] : [],
+      await runEditorTask(editor, async () => {
+        const { content: markdownContent } =
+          await window.electronAPI.readFile(filePath)
+        const { frontmatter, body } = extractFrontmatter(markdownContent)
+        editor.commands.setContent(body, {
+          emitUpdate: false,
+          contentType: "markdown",
         })
-      }
-      setCurrentFilePath(filePath)
-      currentFilePathRef.current = filePath
-      setIsDirty(false)
-      isDirtyRef.current = false
-      document.title = filePath.split('/').pop() ?? filePath
-      window.electronAPI.checkForUpdate().then((info) => {
-        if (info) setUpdateInfo({ type: 'manual', ...info })
+        if (frontmatter !== null) {
+          editor.commands.insertContentAt(0, {
+            type: "frontmatter",
+            content: frontmatter ? [{ type: "text", text: frontmatter }] : [],
+          })
+        }
+        setCurrentFilePath(filePath)
+        currentFilePathRef.current = filePath
+        setIsDirty(false)
+        isDirtyRef.current = false
+        document.title = filePath.split("/").pop() ?? filePath
       })
     })
     return unsubscribe
@@ -407,77 +446,53 @@ export function SimpleEditor() {
 
     const handleDrop = (e: DragEvent) => {
       e.preventDefault()
+      if (isEditorUpdateFrozen(editor)) return
       const files = e.dataTransfer?.files
       if (!files?.length) return
 
-      handleFileDrop(files, window.electronAPI, {
-        setContent: (markdown) => {
-          const { frontmatter, body } = extractFrontmatter(markdown)
-          editor.commands.setContent(body, { emitUpdate: false, contentType: 'markdown' })
-          if (frontmatter !== null) {
-            editor.commands.insertContentAt(0, {
-              type: 'frontmatter',
-              content: frontmatter ? [{ type: 'text', text: frontmatter }] : [],
+      void runEditorTask(editor, () =>
+        handleFileDrop(files, window.electronAPI, {
+          setContent: (markdown) => {
+            const { frontmatter, body } = extractFrontmatter(markdown)
+            editor.commands.setContent(body, {
+              emitUpdate: false,
+              contentType: "markdown",
             })
-          }
-        },
-        setFilePath: (path) => {
-          setCurrentFilePath(path)
-          currentFilePathRef.current = path
-          setIsDirty(false)
-          isDirtyRef.current = false
-        },
-        setTitle: (name) => {
-          document.title = name
-        },
-        onUpdateChecked: (info) => {
-          if (info) setUpdateInfo({ type: 'manual', ...(info as { version: string; downloadUrl: string }) })
-        },
+            if (frontmatter !== null) {
+              editor.commands.insertContentAt(0, {
+                type: "frontmatter",
+                content: frontmatter
+                  ? [{ type: "text", text: frontmatter }]
+                  : [],
+              })
+            }
+          },
+          setFilePath: (path) => {
+            setCurrentFilePath(path)
+            currentFilePathRef.current = path
+            setIsDirty(false)
+            isDirtyRef.current = false
+          },
+          setTitle: (name) => {
+            document.title = name
+          },
+        }),
+      ).catch((error) => {
+        console.error("Unable to open dropped file:", error)
       })
     }
 
-    document.addEventListener('dragover', handleDragOver)
-    document.addEventListener('drop', handleDrop)
+    document.addEventListener("dragover", handleDragOver)
+    document.addEventListener("drop", handleDrop)
     return () => {
-      document.removeEventListener('dragover', handleDragOver)
-      document.removeEventListener('drop', handleDrop)
+      document.removeEventListener("dragover", handleDragOver)
+      document.removeEventListener("drop", handleDrop)
     }
   }, [editor])
 
   return (
     <div className="simple-editor-wrapper">
-      {updateInfo && (
-        <div className="update-banner">
-          <span>
-            {updateInfo.type === 'native'
-              ? `${updateInfo.releaseName || 'A new M Note update'} is ready to install.`
-              : updateInfo.type === 'manual'
-                ? `M Note v${updateInfo.version} is available.`
-                : `You're up to date (v${__APP_VERSION__}).`}
-          </span>
-          {updateInfo.type !== 'none' && (
-            <button
-              className="update-banner-link"
-              onClick={() => {
-                if (updateInfo.type === 'native') {
-                  window.electronAPI?.installUpdate()
-                } else {
-                  window.electronAPI?.openExternal(updateInfo.downloadUrl)
-                }
-              }}
-            >
-              {updateInfo.type === 'native' ? 'Restart' : 'Download'}
-            </button>
-          )}
-          <button
-            className="update-banner-dismiss"
-            onClick={() => setUpdateInfo(null)}
-            aria-label="Dismiss"
-          >
-            ✕
-          </button>
-        </div>
-      )}
+      <UpdateBanner {...appUpdate} />
       <EditorContext.Provider value={{ editor }}>
         <Toolbar
           ref={toolbarRef}
@@ -498,6 +513,7 @@ export function SimpleEditor() {
               canSave={isDirty && currentFilePath !== null}
               currentFilePath={currentFilePath}
               onCheckForUpdate={handleCheckForUpdate}
+              updateStatus={appUpdate.state.status}
             />
           ) : (
             <MobileToolbarContent

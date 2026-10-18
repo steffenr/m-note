@@ -12,9 +12,10 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses'
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    appBundleId: 'com.electron.m-note',
     icon: './resources/icon',
     osxSign: {
-      ignore: [/\/[^/]+\.lproj\/locale\.pak$/],
+      ignore: (file: string) => /\/[^/]+\.lproj\/locale\.pak$/.test(file),
     },
     osxNotarize: process.env.APPLE_ID
       ? {

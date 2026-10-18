@@ -38,7 +38,7 @@ describe('mac update manifest normalization', () => {
     expect(url).not.toContain('%20')
     expect(url).not.toContain(' ')
     expect(url).toBe(
-      'https://github.com/younghoandrewchaa/m-note/releases/latest/download/M.Note-darwin-arm64-1.1.15.zip',
+      'https://github.com/younghoandrewchaa/m-note/releases/download/v1.1.15/M.Note-darwin-arm64-1.1.15.zip',
     )
   })
 
@@ -66,7 +66,7 @@ describe('mac update manifest normalization', () => {
 
     expect(result.releases[0].updateTo.url).toBe(previousUrl)
     expect(result.releases[1].updateTo.url).toBe(
-      'https://github.com/younghoandrewchaa/m-note/releases/latest/download/M.Note-darwin-arm64-1.1.15.zip',
+      'https://github.com/younghoandrewchaa/m-note/releases/download/v1.1.15/M.Note-darwin-arm64-1.1.15.zip',
     )
   })
 })
@@ -113,7 +113,7 @@ describe('Squirrel.Mac feed extraction', () => {
   })
 
   it('throws when no release entry matches currentRelease', () => {
-    const manifest = { currentRelease: '9.9.9', releases: [] }
+    const manifest = { currentRelease: '9.9.9', releases: [] as Array<{ version: string }> }
     expect(() => toSquirrelMacFeed(manifest)).toThrow()
   })
 })

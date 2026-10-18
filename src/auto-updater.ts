@@ -1,67 +1,115 @@
 import { autoUpdater } from 'electron'
+import { checkForUpdate } from './update-checker'
+import type { InstallResult, UpdateState } from './update-state'
 
-export interface AutoUpdateDownloadedInfo {
-  releaseName: string
-  updateUrl: string
-}
-
-interface ConfigureAutoUpdaterOptions {
-  isPackaged: boolean
-  notifyRenderer: (channel: 'auto-update-downloaded', info: AutoUpdateDownloadedInfo) => void
-}
-
-// Squirrel.Mac's JSON server type expects a flat { url, name, notes, pub_date }
-// object, not maker-zip's { currentRelease, releases: [...] } RELEASES.json.
-// update.json (written by scripts/fix-mac-update-manifest.mjs) is that flattened
-// feed.
-const MAC_UPDATE_FEED_URL =
-  'https://github.com/younghoandrewchaa/m-note/releases/latest/download/update.json'
-
+let state: UpdateState = { status: 'idle', revision: 0 }
 let configured = false
-let updateCheckStarted = false
-let nativeUpdateFailed = false
-
-export function configureAutoUpdater({
-  isPackaged,
-  notifyRenderer,
-}: ConfigureAutoUpdaterOptions): boolean {
-  if (process.platform !== 'darwin' || !isPackaged || configured) {
-    return configured
+let notify: (
+  channel: 'update-state-changed',
+  state: UpdateState,
+) => void = () => undefined
+let checking: Promise<UpdateState> | undefined
+let preparing = false
+let prepare: () => Promise<boolean> = async () => true
+let restore: () => void = () => undefined
+export const getUpdateState = (): UpdateState => state
+export const isInstallingUpdate = () => state.status === 'installing'
+type Transition = UpdateState extends infer S
+  ? S extends UpdateState
+    ? Omit<S, 'revision'>
+    : never
+  : never
+function transition(next: Transition) {
+  state = { ...next, revision: state.revision + 1 }
+  notify('update-state-changed', state)
+}
+function fail(error: unknown) {
+  transition({
+    status: 'error',
+    message:
+      error instanceof Error ? error.message : 'Update failed. Please retry.',
+    retryable: true,
+  })
+}
+export function configureAutoUpdater(options: {
+  isPackaged: boolean
+  notifyRenderer: typeof notify
+  prepareInstall?: () => Promise<boolean>
+  restoreWindows?: () => void
+}): boolean {
+  notify = options.notifyRenderer
+  prepare = options.prepareInstall ?? prepare
+  restore = options.restoreWindows ?? restore
+  if (configured) return true
+  if (process.platform !== 'darwin' || !options.isPackaged) {
+    transition({ status: 'unsupported' })
+    return false
   }
-
-  autoUpdater.setFeedURL({
-    url: MAC_UPDATE_FEED_URL,
-    serverType: 'json',
+  autoUpdater.on('update-downloaded', () => {
+    if (state.status === 'downloading')
+      transition({ status: 'ready', version: state.version })
   })
-
-  autoUpdater.on('update-downloaded', (_event, _releaseNotes, releaseName, _releaseDate, updateUrl) => {
-    notifyRenderer('auto-update-downloaded', {
-      releaseName,
-      updateUrl,
-    })
+  autoUpdater.on('update-not-available', () => {
+    if (state.status === 'downloading') transition({ status: 'up-to-date' })
   })
-
   autoUpdater.on('error', (error) => {
-    console.error('Auto update failed:', error)
-    nativeUpdateFailed = true
+    restore()
+    fail(error)
   })
-
   configured = true
   return true
 }
-
-export function checkForNativeUpdate(): boolean {
-  if (!autoUpdater.getFeedURL()) return false
-  if (updateCheckStarted) return true
-  updateCheckStarted = true
-  autoUpdater.checkForUpdates()
-  return true
+export async function checkForNativeUpdate(): Promise<UpdateState> {
+  if (
+    !configured ||
+    preparing ||
+    ['downloading', 'ready', 'installing'].includes(state.status)
+  )
+    return state
+  if (checking) return checking
+  transition({ status: 'checking' })
+  checking = (async () => {
+    try {
+      const release = await checkForUpdate()
+      if (!release) {
+        transition({ status: 'up-to-date' })
+        return state
+      }
+      autoUpdater.setFeedURL({ url: release.feedUrl, serverType: 'json' })
+      transition({ status: 'downloading', version: release.version })
+      autoUpdater.checkForUpdates()
+    } catch (error) {
+      fail(error)
+    }
+    return state
+  })()
+  try {
+    return await checking
+  } finally {
+    checking = undefined
+  }
 }
-
-export function installNativeUpdate(): void {
-  autoUpdater.quitAndInstall()
-}
-
-export function hasNativeUpdateFailed(): boolean {
-  return nativeUpdateFailed
+export async function installNativeUpdate(): Promise<InstallResult> {
+  if (state.status !== 'ready' || preparing)
+    return { status: 'error', message: 'No update is ready to install.' }
+  preparing = true
+  const version = state.version
+  try {
+    if (!(await prepare())) return { status: 'cancelled' }
+    transition({ status: 'installing', version })
+    autoUpdater.quitAndInstall()
+    const latest = getUpdateState()
+    return latest.status === 'error'
+      ? { status: 'error', message: latest.message }
+      : { status: 'installing' }
+  } catch (error) {
+    restore()
+    fail(error)
+    return {
+      status: 'error',
+      message: error instanceof Error ? error.message : 'Installation failed.',
+    }
+  } finally {
+    preparing = false
+  }
 }
