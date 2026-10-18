@@ -13,7 +13,9 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: './resources/icon',
-    osxSign: {},
+    osxSign: {
+      ignore: [/\/[^/]+\.lproj\/locale\.pak$/],
+    },
     osxNotarize: process.env.APPLE_ID
       ? {
           appleId: process.env.APPLE_ID,
