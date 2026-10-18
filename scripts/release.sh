@@ -93,7 +93,9 @@ else
 
   echo "==> Building signed + notarised DMG and update ZIP for ${TAG}..."
   rm -rf out/
-  npx electron-forge make
+  # Show packaging, signing, and notarization activity alongside any caller logs.
+  DEBUG="${DEBUG:+${DEBUG},}electron-packager,electron-osx-sign*,electron-notarize*" \
+    npx electron-forge make
 
   DMG_PATH=$(find out/make -maxdepth 3 -name "*${VERSION}*.dmg" 2>/dev/null | head -1)
   if [ -z "$DMG_PATH" ]; then
