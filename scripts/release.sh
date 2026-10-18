@@ -35,7 +35,7 @@ APP_PATH=$(find "$STAGING/unpacked" -maxdepth 1 -name '*.app' -print -quit)
 EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_PATH/Contents/Info.plist")
 MACH_ARCH="$ARCH"
 if [ "$ARCH" = x64 ]; then MACH_ARCH=x86_64; fi
-lipo -verify_arch "$MACH_ARCH" "$APP_PATH/Contents/MacOS/$EXECUTABLE"
+lipo "$APP_PATH/Contents/MacOS/$EXECUTABLE" -verify_arch "$MACH_ARCH"
 codesign --verify --deep --strict "$APP_PATH"
 TEAM=$(codesign -dv "$APP_PATH" 2>&1 | sed -n 's/^TeamIdentifier=//p')
 BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP_PATH/Contents/Info.plist")
