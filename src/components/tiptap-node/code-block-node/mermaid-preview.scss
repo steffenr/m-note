@@ -1,0 +1,44 @@
+.mermaid-preview {
+  --pele-bg: var(--tt-gray-light-50);
+  --pele-fg: var(--tt-gray-light-800);
+  --pele-muted: var(--tt-gray-light-500);
+  --pele-line: var(--tt-gray-light-600);
+  --pele-surface: var(--tt-gray-light-100);
+  --pele-surface-alt: var(--tt-gray-light-200);
+  --pele-border: var(--tt-gray-light-300);
+  --pele-error: #a33b2b;
+
+  .dark & {
+    --pele-bg: var(--tt-gray-dark-50);
+    --pele-fg: var(--tt-gray-dark-900);
+    --pele-muted: var(--tt-gray-dark-700);
+    --pele-line: var(--tt-gray-dark-800);
+    --pele-surface: var(--tt-gray-dark-100);
+    --pele-surface-alt: var(--tt-gray-dark-200);
+    --pele-border: var(--tt-gray-dark-400);
+    --pele-error: #f2a393;
+  }
+
+  background: var(--pele-bg);
+  color: var(--pele-fg);
+  border: 1px solid var(--pele-border);
+  border-radius: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 1rem;
+  min-width: 0;
+  max-width: 100%;
+  font-family: inherit;
+
+  .mermaid-preview-canvas {
+    width: 100%;
+    overflow: auto;
+  }
+
+  .mermaid-preview-message,
+  .mermaid-preview-error {
+    margin: 0.5rem 0;
+    font-size: 0.875rem;
+  }
+
+  .mermaid-preview-error { color: var(--pele-error); }
+}
