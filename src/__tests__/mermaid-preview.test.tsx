@@ -46,11 +46,11 @@ describe('Mermaid preview', () => {
   it('marks invalid diagrams and recovers without interpreting source as HTML', () => {
     show('flowchart LR\n A --> B')
     show('<img src=x onerror=alert(1)>')
-    expect(host.querySelector('[role="status"]')?.textContent).toContain('Preview could not be updated')
+    expect(host.querySelector('.pele-error')).not.toBeNull()
     expect(host.querySelector('img')).toBeNull()
     show('flowchart LR\n C[Recovered] --> D')
     expect(host.textContent).toContain('Recovered')
-    expect(host.querySelector('[role="status"]')).toBeNull()
+    expect(host.querySelector('.pele-error')).toBeNull()
   })
   it('does not activate links or images supplied by a document', () => {
     show('flowchart LR\n A[Safe] --> B\n click A "https://example.com"')
@@ -68,7 +68,7 @@ describe('Mermaid preview', () => {
   })
   it('reports over-limit source without throwing', () => {
     show('flowchart LR\n' + 'A'.repeat(50001))
-    expect(host.querySelector('[role="status"]')).not.toBeNull()
+    expect(host.querySelector('.pele-error')).not.toBeNull()
     expect(host.querySelector('svg')).toBeNull()
   })
   it('keeps multiple preview instances independent', () => {

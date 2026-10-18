@@ -34,11 +34,8 @@
     overflow: auto;
   }
 
-  .mermaid-preview-message,
-  .mermaid-preview-error {
+  .mermaid-preview-message {
     margin: 0.5rem 0;
     font-size: 0.875rem;
   }
-
-  .mermaid-preview-error { color: var(--pele-error); }
 }
