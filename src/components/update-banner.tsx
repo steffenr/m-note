@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import type { UpdateState } from '../update-state'
+export const UP_TO_DATE_BANNER_MS = 3000
 export function UpdateBanner({
   state,
   check,
@@ -8,7 +10,18 @@ export function UpdateBanner({
   check: () => void
   install: () => void
 }) {
-  if (state.status === 'idle') return null
+  const [dismissedRevision, setDismissedRevision] = useState<number>()
+  useEffect(() => {
+    if (state.status !== 'up-to-date') return
+    const timer = setTimeout(
+      () => setDismissedRevision(state.revision),
+      UP_TO_DATE_BANNER_MS,
+    )
+    return () => clearTimeout(timer)
+  }, [state.status, state.revision])
+  if (state.status === 'idle' || state.status === 'unsupported') return null
+  if (state.status === 'up-to-date' && dismissedRevision === state.revision)
+    return null
   const text =
     state.status === 'checking'
       ? 'Checking for updates…'
@@ -22,7 +35,7 @@ export function UpdateBanner({
               ? "You're up to date."
               : state.status === 'error'
                 ? state.message
-                : 'Automatic updates are available in the installed macOS app.'
+                : null
   return (
     <div className="update-banner" role="status">
       <span>{text}</span>

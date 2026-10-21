@@ -2,7 +2,10 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
-import { UpdateBanner } from '../components/update-banner'
+import {
+  UP_TO_DATE_BANNER_MS,
+  UpdateBanner,
+} from '../components/update-banner'
 import { newerUpdateState } from '../hooks/use-app-update'
 import type { UpdateState } from '../update-state'
 it('renders native actions and never a download link', () => {
@@ -48,4 +51,45 @@ it('ignores stale snapshots after a downloaded event', () => {
   expect(newerUpdateState(ready, { status: 'checking', revision: 1 })).toBe(
     ready,
   )
+})
+it('hides the up-to-date message after a few seconds', () => {
+  vi.useFakeTimers()
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div'),
+    root = createRoot(host)
+  const render = (state: UpdateState) =>
+    act(() =>
+      root.render(
+        <UpdateBanner state={state} check={vi.fn()} install={vi.fn()} />,
+      ),
+    )
+  render({ status: 'up-to-date', revision: 1 })
+  expect(host.textContent).toContain("You're up to date.")
+  act(() => vi.advanceTimersByTime(UP_TO_DATE_BANNER_MS))
+  expect(host.textContent).toBe('')
+  render({ status: 'checking', revision: 2 })
+  render({ status: 'up-to-date', revision: 3 })
+  expect(host.textContent).toContain("You're up to date.")
+  act(() => vi.advanceTimersByTime(UP_TO_DATE_BANNER_MS))
+  expect(host.textContent).toBe('')
+  act(() => root.unmount())
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
+it('renders nothing when native updates are unsupported (dev builds)', () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div'),
+    root = createRoot(host)
+  act(() =>
+    root.render(
+      <UpdateBanner
+        state={{ status: 'unsupported', revision: 1 }}
+        check={vi.fn()}
+        install={vi.fn()}
+      />,
+    ),
+  )
+  expect(host.querySelector('.update-banner')).toBeNull()
+  act(() => root.unmount())
+  vi.unstubAllGlobals()
 })
